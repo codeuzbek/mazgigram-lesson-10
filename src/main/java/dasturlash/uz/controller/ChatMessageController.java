@@ -1,0 +1,34 @@
+package dasturlash.uz.controller;
+
+import dasturlash.uz.dto.chat.ChatMessageCreateDTO;
+import dasturlash.uz.dto.chat.ChatMessageDTO;
+import dasturlash.uz.dto.chat.ChatMessageUpdateDTO;
+import dasturlash.uz.service.ChatMessageService;
+import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/api/v1/chat-message")
+public class ChatMessageController {
+
+    @Autowired
+    private ChatMessageService chatMessageService;
+
+    @PostMapping("")
+    public ResponseEntity<ChatMessageDTO> createChatMessage(@Valid @RequestBody ChatMessageCreateDTO dto) { //ChatMessage
+        return ResponseEntity.ok(chatMessageService.createChatMessage(dto));
+    }
+
+    @PutMapping("/{messageId}")
+    public ResponseEntity<Boolean> updateMessage(@PathVariable("messageId") String messageId,
+                                                 @RequestBody ChatMessageUpdateDTO dto) { //ChatMessage
+        return ResponseEntity.ok(chatMessageService.updateChatMessage(messageId, dto));
+    }
+
+    @DeleteMapping("/{messageId}")
+    public ResponseEntity<Boolean> deleteMessage(@PathVariable("messageId") String messageId) { //ChatMessage
+        return ResponseEntity.ok(chatMessageService.deleteChatMessage(messageId));
+    }
+}
