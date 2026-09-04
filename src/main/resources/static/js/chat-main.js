@@ -88,6 +88,7 @@ const imagePreviewModalInput = document.getElementById('imagePreviewModalInputId
 window.addEventListener('DOMContentLoaded', async () => {
     currentProfileId = localStorage.getItem('id');
 
+    registerEventListeners();
 
     try {
         await connectWebSocket();
@@ -100,6 +101,18 @@ window.addEventListener('DOMContentLoaded', async () => {
     // load chat history
     loadChatList();
 });
+
+/** Attaches every event listener the page needs. */
+function registerEventListeners() {
+    // Typing in the message box: Enter sends, other keys signal "typing".
+    messageInput.addEventListener('keydown', onMessageInputKeydown);
+
+    // One listener for the whole sidebar instead of one per chat item.
+    // (The sidebar is re-rendered often; a listener per item would pile up.)
+    chatListContainer.addEventListener('click', onChatListClick);
+
+    // ...
+}
 
 /* =============================================================================
  * 5. HTTP LAYER
@@ -264,9 +277,9 @@ function renderChatList(chats) {
                     <img src="${photoUrl}" alt="">
                 </div>
                 <div class="chat-info">
-                    <div class="chat-name">${escapeHtml(chat.name)}</div>
+                    <div class="chat-name">${chat.name}</div>
                     ${lastMessage.content
-            ? `<div class="chat-last-message">${escapeHtml(lastMessage.content)}</div>`
+            ? `<div class="chat-last-message">${lastMessage.content}</div>`
             : ''}
                 </div>
                 <div class="chat-meta">
@@ -280,6 +293,329 @@ function renderChatList(chats) {
             </div>`;
     }).join('');
 }
+
+/**
+ * Handles a click anywhere in the sidebar.
+ *
+ * This is "event delegation": one listener on the container works for every
+ * chat item, including items added later.
+ *
+ * @param {MouseEvent} event
+ */
+function onChatListClick(event) {
+    const chatItem = event.target.closest('.chat-item');
+    if (!chatItem) {
+        return;
+    }
+
+    selectChat(chatItem.id, chatItem.dataset.chatType);
+    //is user joined the group
+    openChat(chatItem.id);
+}
+
+/* =============================================================================
+ * 8. OPENING A CHAT
+ * ========================================================================== */
+
+/**
+ * Marks a chat as the selected one and resets everything tied to the previous chat.
+ *
+ * @param {string} chatId
+ * @param {string} chatType 'CHAT' or 'GROUP'
+ */
+function selectChat(chatId, chatType) {
+    selectedChatId = chatId;
+    selectedChatType = chatType;
+
+    // Reset the scroll pagination state of the previous chat.
+
+    // Move the 'active' highlight to the clicked item.
+    document.querySelectorAll('.chat-item.active')
+        .forEach(item => item.classList.remove('active'));
+    const selectedItem = document.getElementById(chatId);
+    if (selectedItem) {
+        selectedItem.classList.add('active');
+    }
+
+    clearInput();
+    messageInput.focus();
+    showChatHeader();
+}
+
+/** Puts the name and type of the selected chat into the header. */
+function showChatHeader() {
+    const chat = chatList.find(item => item.id === selectedChatId);
+    if (!chat) {
+        return;
+    }
+    chatNameDiv.innerText = chat.name;
+    chatStatusDiv.innerText = 'online';
+}
+
+/**
+ * Clears the message area and loads the newest messages of a chat.
+ *
+ * @param {string} chatId
+ */
+async function openChat(chatId) {
+    chatMessageContainer.innerHTML = '';
+
+}
+
+
+/* =============================================================================
+ * 10. RENDERING MESSAGES
+ * ========================================================================== */
+
+/**
+ * Adds messages to the screen while keeping the scroll position steady.
+ *
+ * When older messages are inserted on top, the content below moves down.
+ * Without the correction the view would jump.
+ *
+ * @param {Array}  messages
+ * @param {string} position 'afterbegin' or 'beforeend'
+ */
+function renderMessages(messages, position = 'beforeend') {
+    const previousScrollHeight = chatMessageContainer.scrollHeight;
+    const previousScrollTop = chatMessageContainer.scrollTop;
+
+    messages.forEach(message => appendMessage(message, position));
+
+    requestAnimationFrame(() => {
+        if (position === 'afterbegin') {
+            const addedHeight = chatMessageContainer.scrollHeight - previousScrollHeight;
+            chatMessageContainer.scrollTop = previousScrollTop + addedHeight;
+        } else {
+            chatMessageContainer.scrollTop = previousScrollTop;
+        }
+    });
+}
+
+/**
+ * Builds the HTML of one message and inserts it into the message area.
+ *
+ * @param {object} message
+ * @param {string} position 'afterbegin' or 'beforeend'
+ */
+function appendMessage(message, position = 'beforeend') {
+    const isOwnMessage = message.senderId === currentProfileId;
+    const sender = message.sender || {};
+
+    // Show the avatar and the sender name only for other people in a group.
+    const showSenderInfo = selectedChatType === 'GROUP' && !isOwnMessage;
+
+    const html = `
+        <div class="message-wrapper ${message.isReceiverRead ? 'read' : 'unread'}"
+             id="${message.id}"
+             data-message-id="${message.id}"
+             data-createdDate="${message.createdDate}"
+             data-sender-id="${message.senderId}"
+             data-chat-id="${selectedChatId}">
+
+            ${showSenderInfo ? `
+                <div class="chat-avatar">
+                    <img src="${sender.photo ? sender.photo.url : './img/brain.png'}" alt="">
+                </div>` : ''}
+
+            <div class="message ${isOwnMessage ? 'message-right' : 'message-left'}">
+                ${showSenderInfo ? `
+                    <div class="message-sender-data">
+                        <div class="message-sender-name">${escapeHtml(sender.name || '')}</div>
+                    </div>` : ''}
+
+                ${message.repliedMessage ? `
+                    <div class="reply-message-preview">
+                        ${escapeHtml(message.repliedMessage.content)}
+                    </div>` : ''}
+
+                <div class="message-text-data-container">
+                    ${renderMessageBody(message)}
+                    ${isOwnMessage ? `
+                        <div onclick="openToolTip(event)"><i class="fas fa-ellipsis-v"></i></div>
+                        <div class="tooltip">
+                            <div class="tooltip-option" onclick="editMessage('${message.id}')">
+                                <i class="fa fa-pencil" aria-hidden="true"></i>Edit
+                            </div>
+                            <div class="tooltip-option" onclick="deleteMessage('${message.id}')">
+                                <i class="fa fa-trash" aria-hidden="true"></i>Delete
+                            </div>
+                            <div class="tooltip-option" onclick="replyToMessage('${message.id}')">
+                                <i class="fa fa-reply" aria-hidden="true"></i>Reply
+                            </div>
+                        </div>` : ''}
+                </div>
+
+                <div class="message-text-date-container">
+                    <div class="message-time">${formatDateTime(message.createdDate)}</div>
+                    ${isOwnMessage
+        ? `<div><i class="fas ${message.isReceiverRead ? 'fa-check-double' : 'fa-check'}"></i></div>`
+        : ''}
+                </div>
+            </div>
+        </div>`;
+
+    chatMessageContainer.insertAdjacentHTML(position, html);
+}
+
+/**
+ * Builds the inner part of a message, which depends on its type.
+ *
+ * @param {object} message
+ * @returns {string} HTML
+ */
+function renderMessageBody(message) {
+    const caption = message.capture ? `<div>${escapeHtml(message.capture)}</div>` : '';
+    const attachUrl = message.attach ? message.attach.url : '';
+
+    switch (message.chatMessageType) {
+        case 'TEXT':
+            return `<div id="${message.id}-content">${escapeHtml(message.content)}</div>`;
+
+        case 'PHOTO':
+            return `<div>
+                        <div class="message-image-container"><img src="${attachUrl}" alt=""></div>
+                        ${caption}
+                    </div>`;
+
+        case 'VIDEO':
+            return `<div>
+                        <video controls>
+                            <source src="${attachUrl}" type="video/mp4">
+                            Your browser does not support the video tag.
+                        </video>
+                        ${caption}
+                    </div>`;
+
+        case 'AUDIO':
+            return `<div>
+                        <audio controls>
+                            <source src="${attachUrl}">
+                            Your browser does not support the audio tag.
+                        </audio>
+                        ${caption}
+                    </div>`;
+
+        case 'FILE':
+            return `<div>
+                        <a href="${attachUrl}" target="_blank">
+                            <i class="fa-solid fa-file"></i>
+                        </a>
+                        ${caption}
+                    </div>`;
+
+        default:
+            return '';
+    }
+}
+
+/**
+ * Replaces the text of a message that was edited.
+ *
+ * @param {object} message must contain id and content
+ */
+function updateMessageContent(message) {
+    const contentElement = document.getElementById(message.id + '-content');
+    if (contentElement) {
+        contentElement.innerText = message.content;
+    }
+}
+
+/** Scrolls to the bottom of the message area. */
+function scrollToBottom() {
+    chatMessageContainer.scrollTop = chatMessageContainer.scrollHeight;
+}
+
+
+/* =============================================================================
+ * 11. SENDING MESSAGES
+ * ========================================================================== */
+
+/**
+ * Reacts to a key press in the message box.
+ *
+ * @param {KeyboardEvent} event
+ */
+function onMessageInputKeydown(event) {
+    console.log("onMessageInputKeydown");
+    // Enter sends the message; Shift+Enter is left alone for a line break.
+    if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendMessage();
+        return;
+    }
+    if (isTextKey(event)) {
+        // send typing signal
+    }
+}
+
+/**
+ * @param {KeyboardEvent} event
+ * @returns {boolean} true when the key actually changes the text
+ *
+ * Without this check, Shift, Ctrl, Tab and the arrow keys would each send a
+ * "user is typing" signal.
+ */
+function isTextKey(event) {
+    if (event.ctrlKey || event.metaKey || event.altKey) {
+        return false;
+    }
+    return event.key.length === 1 || event.key === 'Backspace' || event.key === 'Delete';
+}
+
+/**
+ * Sends the text in the input box, either as a new message or as an edit of
+ * the message the user picked with "Edit".
+ */
+async function sendMessage() {
+    console.log("sendMessage");
+    const content = messageInput.value.trim();
+    if (!content || !selectedChatId) {
+        return;
+    }
+
+    // Remember what we are doing before clearInput() resets the state.
+    const editingMessageId = selectedMessageId;
+
+    const chatMessage = {
+        receiverId: selectedChatId,
+        content: content,
+        repliedMessageId: repliedMessageId,
+        chatMessageType: 'TEXT'
+    };
+    console.log(chatMessage);
+    clearInput();
+
+    try {
+        if (editingMessageId) {
+            await apiRequest(`/api/v1/chat-message/${editingMessageId}`, {
+                method: 'PUT',
+                body: JSON.stringify(chatMessage)
+            });
+            updateMessageContent({id: editingMessageId, content: content});
+        } else {
+            const savedMessage = await apiRequest('/api/v1/chat-message', {
+                method: 'POST',
+                body: JSON.stringify(chatMessage)
+            });
+            if (savedMessage) {
+                renderMessages([savedMessage], 'beforeend');
+                scrollToBottom();
+            }
+        }
+    } catch (error) {
+        console.error('Could not send the message:', error);
+        alert('Message was not sent. Please try again.');
+    }
+}
+
+/** Empties the input box and cancels any pending edit or reply. */
+function clearInput() {
+    messageInput.value = '';
+    selectedMessageId = null;
+    repliedMessageId = null;
+}
+
 
 /* =============================================================================
  * 20. SMALL UTIL/HELPERS
